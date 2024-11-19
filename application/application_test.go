@@ -4,40 +4,60 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
-	"github.com/stretchr/testify/assert"
-	"github.com/wissance/Ferrum/config"
-	"github.com/wissance/Ferrum/data"
-	"github.com/wissance/Ferrum/dto"
-	"github.com/wissance/Ferrum/errors"
-	"github.com/wissance/stringFormatter"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v4"
+	"github.com/stretchr/testify/assert"
+	"github.com/wissance/Ferrum/config"
+	"github.com/wissance/Ferrum/data"
+	"github.com/wissance/Ferrum/dto"
+	"github.com/wissance/Ferrum/errors"
+	"github.com/wissance/stringFormatter"
 )
 
-var testKey = []byte("qwerty1234567890")
-var testServerData = data.ServerData{
-	Realms: []data.Realm{
-		{Name: "testrealm1", TokenExpiration: 10, RefreshTokenExpiration: 5,
-			Clients: []data.Client{
-				{Name: "testclient1", Type: data.Confidential, Auth: data.Authentication{Type: data.ClientIdAndSecrets,
-					Value: "fb6Z4RsOadVycQoeQiN57xpu8w8wplYz"}},
-			}, Users: []interface{}{
-				map[string]interface{}{"info": map[string]interface{}{"sub": "667ff6a7-3f6b-449b-a217-6fc5d9ac0723",
-					"name": "vano", "preferred_username": "vano",
-					"given_name": "vano ivanov", "family_name": "ivanov", "email_verified": true},
-					"credentials": map[string]interface{}{"password": "1234567890"}},
-			}},
-	},
-}
-var loggingConfig = config.LoggingConfig{Level: "info", Appenders: []config.AppenderConfig{{Level: "info", Type: config.Console},
-	{Level: "info", Type: config.RollingFile, Destination: &config.DestinationConfig{File: "logs//ferrum_tests.log"}}}}
-var httpAppConfig = config.AppConfig{ServerCfg: config.ServerConfig{Schema: config.HTTP, Address: "127.0.0.1", Port: 8284}, Logging: loggingConfig}
-var httpsAppConfig = config.AppConfig{ServerCfg: config.ServerConfig{Schema: config.HTTPS, Address: "127.0.0.1", Port: 8672,
-	Security: config.SecurityConfig{KeyFile: "../certs/server.key", CertificateFile: "../certs/server.crt"}}, Logging: loggingConfig}
+var (
+	testKey        = []byte("qwerty1234567890")
+	testServerData = data.ServerData{
+		Realms: []data.Realm{
+			{
+				Name: "testrealm1", TokenExpiration: 10, RefreshTokenExpiration: 5,
+				Clients: []data.Client{
+					{Name: "testclient1", Type: data.Confidential, Auth: data.Authentication{
+						Type:  data.ClientIdAndSecrets,
+						Value: "fb6Z4RsOadVycQoeQiN57xpu8w8wplYz",
+					}},
+				}, Users: []interface{}{
+					map[string]interface{}{
+						"info": map[string]interface{}{
+							"sub":  "667ff6a7-3f6b-449b-a217-6fc5d9ac0723",
+							"name": "vano", "preferred_username": "vano",
+							"given_name": "vano ivanov", "family_name": "ivanov", "email_verified": true,
+						},
+						"credentials": map[string]interface{}{"password": "1234567890"},
+					},
+				},
+			},
+		},
+	}
+)
+
+var loggingConfig = config.LoggingConfig{Level: "info", Appenders: []config.AppenderConfig{
+	{Level: "info", Type: config.Console},
+	{Level: "info", Type: config.RollingFile, Destination: &config.DestinationConfig{File: "logs//ferrum_tests.log"}},
+}}
+
+var (
+	httpAppConfig  = config.AppConfig{ServerCfg: config.ServerConfig{Schema: config.HTTP, Address: "127.0.0.1", Port: 8284}, Logging: loggingConfig}
+	httpsAppConfig = config.AppConfig{ServerCfg: config.ServerConfig{
+		Schema: config.HTTPS, Address: "127.0.0.1", Port: 8672,
+		Security: config.SecurityConfig{KeyFile: "../certs/server.key", CertificateFile: "../certs/server.crt"},
+	}, Logging: loggingConfig}
+)
 
 func TestApplicationOnHttp(t *testing.T) {
 	testRunCommonTestCycleImpl(t, &httpAppConfig, "http://127.0.0.1:8284")
@@ -71,6 +91,7 @@ func testRunCommonTestCycleImpl(t *testing.T, appConfig *config.AppConfig, baseU
 
 	// token introspect
 	tokenIntResult := checkIntrospectToken(t, baseUrl, realm, token.AccessToken, "testclient1", "fb6Z4RsOadVycQoeQiN57xpu8w8wplYz", "200 OK")
+	compareTokenClaimsAndIntrospect(t, token.AccessToken, tokenIntResult)
 	active, ok := tokenIntResult["active"]
 	assert.True(t, ok)
 	assert.True(t, active.(bool))
@@ -103,7 +124,8 @@ func testRunCommonTestCycleImpl(t *testing.T, appConfig *config.AppConfig, baseU
 }
 
 func issueNewToken(t *testing.T, baseUrl string, realm string, clientId string, clientSecret string,
-	userName string, password string) *http.Response {
+	userName string, password string,
+) *http.Response {
 	tokenUrlTemplate := "{0}/auth/realms/{1}/protocol/openid-connect/token"
 	tokenUrl := stringFormatter.Format(tokenUrlTemplate, baseUrl, realm)
 	getTokenData := url.Values{}
@@ -144,6 +166,7 @@ func getUserInfo(t *testing.T, baseUrl string, realm string, token string, expec
 	assert.Nil(t, err)
 	return result
 }
+
 func checkIntrospectToken(t *testing.T, baseUrl string, realm string, token string, clientId string, clientSecret string, expectedStatus string) map[string]interface{} {
 	urlTemplate := "{0}/auth/realms/{1}/protocol/openid-connect/token/introspect"
 	reqUrl := stringFormatter.Format(urlTemplate, baseUrl, realm)
@@ -166,4 +189,20 @@ func checkIntrospectToken(t *testing.T, baseUrl string, realm string, token stri
 	err = json.Unmarshal(responseBody, &result)
 	assert.Nil(t, err)
 	return result
+}
+
+func compareTokenClaimsAndIntrospect(t *testing.T, accessToken string, introspectResult map[string]interface{}) {
+	t.Helper()
+
+	mapClaims := &jwt.MapClaims{}
+	parser := jwt.NewParser()
+	_, _, err := parser.ParseUnverified(accessToken, mapClaims)
+	assert.NoError(t, err)
+	tokenExp, ok := (map[string]interface{})(*mapClaims)["exp"]
+	assert.True(t, ok)
+
+	introspectExp, ok := introspectResult["exp"]
+	assert.True(t, ok)
+
+	assert.EqualValues(t, tokenExp, introspectExp)
 }

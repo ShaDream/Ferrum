@@ -3,14 +3,13 @@ package data
 import (
 	"github.com/google/uuid"
 	"github.com/wissance/Ferrum/utils/jsontools"
-	"time"
 )
 
 type RawUserInfo interface{}
 
 type JwtCommonInfo struct {
-	IssuedAt     time.Time `json:"iat"`
-	ExpiredAt    time.Time `json:"exp"`
+	IssuedAt     int64     `json:"iat"`
+	ExpiredAt    int64     `json:"exp"`
 	JwtId        uuid.UUID `json:"jti"`
 	Type         string    `json:"typ"`
 	Issuer       string    `json:"iss"`

@@ -202,7 +202,7 @@ func (wCtx *WebApiContext) Introspect(respWriter http.ResponseWriter, request *h
 	result := dto.IntrospectTokenResult{
 		Active: active,
 		Type:   tokenType,
-		Exp:    realmPtr.TokenExpiration,
+		Exp:    int(session.Expired.Unix()),
 	}
 	afterHandle(&respWriter, status, &result)
 }
